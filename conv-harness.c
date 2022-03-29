@@ -299,7 +299,7 @@ void multichannel_conv(float *** image, int16_t **** kernels,
 		       int nchannels, int nkernels, int kernel_order)
 {
   int h, w, x, y, c, m;
-
+  
   for ( m = 0; m < nkernels; m++ ) {
     for ( w = 0; w < width; w++ ) {
       for ( h = 0; h < height; h++ ) {
@@ -324,20 +324,64 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
 {
   // this call here is just dummy code that calls the slow, simple, correct version.
   // insert your own code instead
+  
+  //image and kernels both contain channel restriction, can rearrange kernels matrix so that c is last, and can be vectorised
+  //kernels[m][c][x][y] -> kernelsRearranged[m][x][y][c]
+  
   int h, w, x, y, c, m;
-
+  int rem = nchannels%4;
+  int16_t ****kernelsRearranged = new_empty_4d_matrix_int16(nkernels, kernel_order, kernel_order, nchannels);
+  for (m = 0; m < nkernels; m++)
+  {
+    for (c = 0; c < nchannels; c++)
+    {
+      for (x = 0; x < kernel_order; x++)
+      {
+        for (y = 0; y < kernel_order; y++)
+        {
+          kernelsRearranged[m][x][y][c] = kernels[m][c][x][y];
+        }
+      }
+    }
+  }
+  
+  __m128 vec_image;
+  __m128 vec_kernel;
+  __m128 vec_mul;
+  __m128 vec_sum;
+  
   for ( m = 0; m < nkernels; m++ ) {
     for ( w = 0; w < width; w++ ) {
       for ( h = 0; h < height; h++ ) {
         double sum = 0.0;
-        for ( c = 0; c < nchannels; c++ ) {
+        vec_sum = _mm_setzero_ps();
+        for ( c = 0; c < nchannels-rem; c+=4 ) {
           for ( x = 0; x < kernel_order; x++) {
             for ( y = 0; y < kernel_order; y++ ) {
-              sum += image[w+x][h+y][c] * kernels[m][c][x][y];
+              vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
+              const float kernelfloat[4] = {(float) kernelsRearranged[m][x][y][c], (float) kernelsRearranged[m][x][y][c+1], (float) kernelsRearranged[m][x][y][c+2], (float) kernelsRearranged[m][x][y][c+3]};
+              vec_kernel = _mm_loadu_ps(&kernelfloat[0]);
+              vec_mul = _mm_mul_ps(vec_image, vec_kernel);
+              vec_sum = _mm_add_ps(vec_sum, vec_mul);
             }
           }
-          output[m][w][h] = (float) sum;
         }
+        
+        vec_sum = _mm_hadd_ps(vec_sum, vec_sum);
+        vec_sum = _mm_hadd_ps(vec_sum, vec_sum);
+        float tempsum[4];
+        _mm_storeu_ps(tempsum, vec_sum);
+        sum += (double) tempsum[0];
+        
+        for ( ; c < nchannels; c++)
+        {
+          for ( x = 0; x < kernel_order; x++) {
+            for ( y = 0; y < kernel_order; y++ ) {
+              sum += image[w+x][h+y][c] * kernelsRearranged[m][x][y][c];
+            }
+          }
+        }
+        output[m][w][h] = (float) sum;
       }
     }
   }
