@@ -16,3 +16,5 @@ https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html
 https://arxiv.org/pdf/1704.04428.pdf
 
 https://medium.com/apache-mxnet/multi-channel-convolutions-explained-with-ms-excel-9bbf8eb77108
+
+Lecture slides
