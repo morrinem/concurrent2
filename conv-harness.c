@@ -325,12 +325,15 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
   // this call here is just dummy code that calls the slow, simple, correct version.
   // insert your own code instead
   
+  //multichannel_conv(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  //return;
+  
   //image and kernels both contain channel restriction, can rearrange kernels matrix so that c is last, and can be vectorised
   //kernels[m][c][x][y] -> kernelsRearranged[m][x][y][c]
   
   int h, w, x, y, c, m;
-  int rem = nchannels%4;
   int16_t ****kernelsRearranged = new_empty_4d_matrix_int16(nkernels, kernel_order, kernel_order, nchannels);
+  
   for (m = 0; m < nkernels; m++)
   {
     for (c = 0; c < nchannels; c++)
@@ -348,22 +351,33 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
   __m128 vec_image;
   __m128 vec_kernel;
   __m128 vec_mul;
-  __m128 vec_sum;
+  __m128d vec_sum[2];
+  
+  int rem = nchannels%4;
   
   for ( m = 0; m < nkernels; m++ ) {
     for ( w = 0; w < width; w++ ) {
       for ( h = 0; h < height; h++ ) {
         double sum = 0.0;
-        vec_sum = _mm_setzero_ps();
-        
         for ( x = 0; x < kernel_order; x++) {
           for ( y = 0; y < kernel_order; y++ ) {
             for ( c = 0; c < nchannels-rem; c+=4 ) {
+              vec_sum[0] = _mm_setzero_pd(); vec_sum[1] = _mm_setzero_pd();
+              
               vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
               const float kernelfloat[4] = {(float) kernelsRearranged[m][x][y][c], (float) kernelsRearranged[m][x][y][c+1], (float) kernelsRearranged[m][x][y][c+2], (float) kernelsRearranged[m][x][y][c+3]};
               vec_kernel = _mm_loadu_ps(&kernelfloat[0]);
               vec_mul = _mm_mul_ps(vec_image, vec_kernel);
-              vec_sum = _mm_add_ps(vec_sum, vec_mul);
+              
+              vec_sum[0] = _mm_add_pd(vec_sum[0], _mm_cvtps_pd(vec_mul));
+              vec_mul = _mm_shuffle_ps(vec_mul, vec_mul, _MM_SHUFFLE(1, 0, 3, 2));
+              vec_sum[1] = _mm_add_pd(vec_sum[1], _mm_cvtps_pd(vec_mul));
+              
+              vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[1]);
+              vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[0]);
+              double tempsum[2];
+              _mm_storeu_pd(tempsum, vec_sum[0]);
+              sum += tempsum[0];
             }
             
             for ( ; c < nchannels; c++)
@@ -372,12 +386,6 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
             }
           }
         }
-        
-        vec_sum = _mm_hadd_ps(vec_sum, vec_sum);
-        vec_sum = _mm_hadd_ps(vec_sum, vec_sum);
-        float tempsum[4];
-        _mm_storeu_ps(tempsum, vec_sum);
-        sum += (double) tempsum[0];
         
         output[m][w][h] = (float) sum;
       }
