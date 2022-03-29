@@ -355,14 +355,20 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
       for ( h = 0; h < height; h++ ) {
         double sum = 0.0;
         vec_sum = _mm_setzero_ps();
-        for ( c = 0; c < nchannels-rem; c+=4 ) {
-          for ( x = 0; x < kernel_order; x++) {
-            for ( y = 0; y < kernel_order; y++ ) {
+        
+        for ( x = 0; x < kernel_order; x++) {
+          for ( y = 0; y < kernel_order; y++ ) {
+            for ( c = 0; c < nchannels-rem; c+=4 ) {
               vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
               const float kernelfloat[4] = {(float) kernelsRearranged[m][x][y][c], (float) kernelsRearranged[m][x][y][c+1], (float) kernelsRearranged[m][x][y][c+2], (float) kernelsRearranged[m][x][y][c+3]};
               vec_kernel = _mm_loadu_ps(&kernelfloat[0]);
               vec_mul = _mm_mul_ps(vec_image, vec_kernel);
               vec_sum = _mm_add_ps(vec_sum, vec_mul);
+            }
+            
+            for ( ; c < nchannels; c++)
+            {
+              sum += image[w+x][h+y][c] * kernelsRearranged[m][x][y][c];
             }
           }
         }
@@ -373,14 +379,6 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
         _mm_storeu_ps(tempsum, vec_sum);
         sum += (double) tempsum[0];
         
-        for ( ; c < nchannels; c++)
-        {
-          for ( x = 0; x < kernel_order; x++) {
-            for ( y = 0; y < kernel_order; y++ ) {
-              sum += image[w+x][h+y][c] * kernelsRearranged[m][x][y][c];
-            }
-          }
-        }
         output[m][w][h] = (float) sum;
       }
     }
