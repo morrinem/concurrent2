@@ -11,7 +11,7 @@ while not ssh'ed
 `scp <directory(ies)> username@stoker.scss.tcd.ie:~/<directory>`
 
 ## running
-`make
+`make`
 
 `./conv <img width> <img height> <kernel order> <n channels> <n kernels>`
 
