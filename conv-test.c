@@ -39,7 +39,8 @@
 #include <math.h>
 #include <stdint.h>
 #include <x86intrin.h>
-#include <omp.h>
+
+#include "conv-functions.c"
 
 /* the following two definitions of DEBUGGING control whether or not
    debugging information is written out. To put the program into
@@ -293,84 +294,6 @@ void check_result(float *** result, float *** control,
   }
 }
 
-/* the slow but correct version of matmul written by David */
-void multichannel_conv(float *** image, int16_t **** kernels,
-		       float *** output, int width, int height,
-		       int nchannels, int nkernels, int kernel_order)
-{
-  int h, w, x, y, c, m;
-  
-  for ( m = 0; m < nkernels; m++ ) {
-    for ( w = 0; w < width; w++ ) {
-      for ( h = 0; h < height; h++ ) {
-        double sum = 0.0;
-        for ( c = 0; c < nchannels; c++ ) {
-          for ( x = 0; x < kernel_order; x++) {
-            for ( y = 0; y < kernel_order; y++ ) {
-              sum += image[w+x][h+y][c] * kernels[m][c][x][y];
-            }
-          }
-          output[m][w][h] = (float) sum;
-        }
-        
-      }
-    }
-  }
-}
-
-/* the fast version of matmul written by the student */
-void student_conv(float *** image, int16_t **** kernels, float *** output,
-               int width, int height, int nchannels, int nkernels,
-               int kernel_order)
-{
-  int16_t ****kernelsRearranged = new_empty_4d_matrix_int16(nkernels, kernel_order, kernel_order, nchannels);
-  
-  #pragma omp parallel for
-  for (int m = 0; m < nkernels; m++)
-  {
-    for (int c = 0; c < nchannels; c++)
-    {
-      for (int x = 0; x < kernel_order; x++)
-      {
-        for (int y = 0; y < kernel_order; y++)
-        {
-          kernelsRearranged[m][x][y][c] = kernels[m][c][x][y];
-        }
-      }
-    }
-  }
-  
-  int mwhlimit = nkernels*width*height;
-  
-  #pragma omp parallel for
-  for (int mwh = 0; mwh < mwhlimit; mwh++ ) {
-    const int m = mwh / (width * height) % nkernels;
-    const int w = (mwh/height) % width;
-    const int h = mwh % height;
-    __m128d vec_sum[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
-    
-    for (int x = 0; x < kernel_order; x++) {
-      for (int y = 0; y < kernel_order; y++ ) {
-        for (int c = 0; c < nchannels; c+=4 ) {
-          
-          const __m128 vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
-          const float kernelfloat[4] = {(float) kernelsRearranged[m][x][y][c], (float) kernelsRearranged[m][x][y][c+1], (float) kernelsRearranged[m][x][y][c+2], (float) kernelsRearranged[m][x][y][c+3]};
-          const __m128 vec_kernel = _mm_loadu_ps(&kernelfloat[0]);
-          __m128 vec_mul = _mm_mul_ps(vec_image, vec_kernel);
-          
-          vec_sum[0] = _mm_add_pd(vec_sum[0], _mm_cvtps_pd(vec_mul));
-          vec_mul = _mm_shuffle_ps(vec_mul, vec_mul, _MM_SHUFFLE(1, 0, 3, 2));
-          vec_sum[1] = _mm_add_pd(vec_sum[1], _mm_cvtps_pd(vec_mul));
-        }
-      }
-    }
-    vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[1]);
-    vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[0]);
-    
-    output[m][w][h] = (float) _mm_cvtsd_f64(vec_sum[0]);
-  }
-}
-
 int main(int argc, char ** argv)
 {
   //float image[W][H][C];
@@ -380,7 +303,7 @@ int main(int argc, char ** argv)
   float *** image;
   int16_t **** kernels;
   float *** control_output, *** output;
-  long long mul_time;
+  long long mul_time[7];
   int width, height, kernel_order, nchannels, nkernels;
   struct timeval start_time;
   struct timeval stop_time;
@@ -406,7 +329,7 @@ int main(int argc, char ** argv)
             kernel_order);
     exit(1);
   }
-
+  
   /* allocate the matrices */
   image = gen_random_3d_matrix_float(width+kernel_order, height + kernel_order,
                                nchannels);
@@ -414,30 +337,39 @@ int main(int argc, char ** argv)
   output = new_empty_3d_matrix_float(nkernels, width, height);
   control_output = new_empty_3d_matrix_float(nkernels, width, height);
 
-  //DEBUGGING(write_out(A, a_dim1, a_dim2));
-
-  /* use a simple multichannel convolution routine to produce control result */
-  multichannel_conv(image, kernels, control_output, width,
-                    height, nchannels, nkernels, kernel_order);
-
-  /* record starting time of student's code*/
+  
   gettimeofday(&start_time, NULL);
-
-  /* perform student's multichannel convolution */
-  student_conv(image, kernels, output, width,
-                    height, nchannels, nkernels, kernel_order);
-
-  /* record finishing time */
+  defaultconv(image, kernels, control_output, width, height, nchannels, nkernels, kernel_order);
   gettimeofday(&stop_time, NULL);
-  mul_time = (stop_time.tv_sec - start_time.tv_sec) * 1000000L +
-    (stop_time.tv_usec - start_time.tv_usec);
-  printf("Student conv time: %lld microseconds\n", mul_time);
+  mul_time[0] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
+  
+  gettimeofday(&start_time, NULL);
+  maximumconstparallel(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  gettimeofday(&stop_time, NULL);
+  mul_time[1] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
+  
+  gettimeofday(&start_time, NULL);
+  rearrangeparallel(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  gettimeofday(&stop_time, NULL);
+  mul_time[2] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
+  
+  gettimeofday(&start_time, NULL);
+  rearrange2dparallel(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  gettimeofday(&stop_time, NULL);
+  mul_time[3] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
+  
+  gettimeofday(&start_time, NULL);
+  rearrange4dparallel(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  gettimeofday(&stop_time, NULL);
+  mul_time[4] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
+  
+  gettimeofday(&start_time, NULL);
+  rearrangechannelparallel(image, kernels, output, width, height, nchannels, nkernels, kernel_order);
+  gettimeofday(&stop_time, NULL);
+  mul_time[5] = (stop_time.tv_sec - start_time.tv_sec) * 1000000L + (stop_time.tv_usec - start_time.tv_usec);
 
-  DEBUGGING(write_out(output, nkernels, width, height));
-
-  /* now check that the student's multichannel convolution routine
-     gives the same answer as the known working version */
-  check_result(output, control_output, nkernels, width, height);
+  printf("and the results are in:\n");
+  for (int i = 0; i < 7; i++) printf("%i: %lld microseconds\n", i, mul_time[i]);
 
   return 0;
 }
