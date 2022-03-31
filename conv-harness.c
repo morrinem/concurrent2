@@ -340,7 +340,7 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
     }
   }
   
-  int mwhlimit = nkernels*width*height;
+  const int mwhlimit = nkernels*width*height;
   
   #pragma omp parallel for
   for (int mwh = 0; mwh < mwhlimit; mwh++ ) {
