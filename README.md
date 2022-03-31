@@ -1,7 +1,7 @@
 # concurrent2
 
 ## connecting to stoker
-connect using openVPN
+connect using openVPN (only if not on campus)
 
 `ssh -X username@stoker.scss.tcd.ie`
 
