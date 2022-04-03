@@ -323,8 +323,10 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
                int width, int height, int nchannels, int nkernels,
                int kernel_order)
 {
+  //new kernels rearranged so that its easier to grab data in sequence, improves locality
   int16_t ****kernelsRearranged = new_empty_4d_matrix_int16(nkernels, kernel_order, kernel_order, nchannels);
   
+  //parallelise the rearranging, this doesnt improve performance significantly, most of the work is in the next part
   #pragma omp parallel for
   for (int m = 0; m < nkernels; m++)
   {
@@ -340,34 +342,49 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
     }
   }
   
+  //precompute a limit on combined for loop
   const int mwhlimit = nkernels*width*height;
   
+  //the three m, w, h loop is combined into one single loop, and allows it all to be parallelised at once, meaning more threads. Collapse (3) omp option is slower, but more consistent in its speed
   #pragma omp parallel for
   for (int mwh = 0; mwh < mwhlimit; mwh++ ) {
+    //using 1D index, calculate the 3D coordinate of m, w, and h, const where possible increases speed
     const int m = mwh / (width * height) % nkernels;
     const int w = (mwh/height) % width;
     const int h = mwh % height;
+    //create 4 total local vector double sums
     __m128d vec_sum[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
     
+    //rearrange for loops so c is last, improves locality
     for (int x = 0; x < kernel_order; x++) {
       for (int y = 0; y < kernel_order; y++ ) {
         for (int c = 0; c < nchannels; c+=4 ) {
-          
+          //load image into vector
           const __m128 vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
+          //convert int16's to float and store in a new temporary array
           const float kernelfloat[4] = {(float) kernelsRearranged[m][x][y][c], (float) kernelsRearranged[m][x][y][c+1], (float) kernelsRearranged[m][x][y][c+2], (float) kernelsRearranged[m][x][y][c+3]};
+          //load the new float kernels into vector
           const __m128 vec_kernel = _mm_loadu_ps(&kernelfloat[0]);
+          //multiply 4 images by 4 kernels using vectors
           __m128 vec_mul = _mm_mul_ps(vec_image, vec_kernel);
           
+          //convert the lower 2 floats of mul to double and add to sum total
           vec_sum[0] = _mm_add_pd(vec_sum[0], _mm_cvtps_pd(vec_mul));
+          //rearrange mul so that the upper two floats are now the lower two floats
           vec_mul = _mm_shuffle_ps(vec_mul, vec_mul, _MM_SHUFFLE(1, 0, 3, 2));
+          //convert the lower 2 floats of mul to double and add to sum total
           vec_sum[1] = _mm_add_pd(vec_sum[1], _mm_cvtps_pd(vec_mul));
         }
+        //note nchannels should always be 2^n and >32, therefore it will always be %4, so no remainder sums necessary
       }
     }
+    //horizontally add all 4 doubles together to get a final sum
     vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[1]);
     vec_sum[0] = _mm_hadd_pd(vec_sum[0], vec_sum[0]);
     
+    //load final sum to output
     output[m][w][h] = (float) _mm_cvtsd_f64(vec_sum[0]);
+    //note, has been moved out an array, since the dependant variables, m, w, and h do not use c, and the output is being repeatedly overwritted unnecessarily before
   }
 }
 
