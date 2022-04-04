@@ -349,9 +349,9 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
   
   //precompute a limit on combined for loop
   const int mwhlimit = nkernels*width*height;
-  
+  __m128 vec_image, vec_kernel;
   //the three m, w, h loop is combined into one single loop, and allows it all to be parallelised at once, meaning more threads. Collapse (3) omp option is slower, but more consistent in its speed
-  #pragma omp parallel for
+  #pragma omp parallel for private(vec_image, vec_kernel)
   for (int mwh = 0; mwh < mwhlimit; mwh++ ) {
     //using 1D index, calculate the 3D coordinate of m, w, and h, const where possible increases speed
     const int m = mwh / (width * height) % nkernels;
@@ -365,18 +365,18 @@ void student_conv(float *** image, int16_t **** kernels, float *** output,
       for (int y = 0; y < kernel_order; y++ ) {
         for (int c = 0; c < nchannels; c+=4 ) {
           //load image into vector
-          const __m128 vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
+          vec_image = _mm_loadu_ps(&image[w+x][h+y][c]);
           //load the kernels into vector
-          const __m128 vec_kernel = _mm_loadu_ps(&kernelsRearranged[m][x][y][c]);
+          vec_kernel = _mm_loadu_ps(&kernelsRearranged[m][x][y][c]);
           //multiply 4 images by 4 kernels using vectors
-          __m128 vec_mul = _mm_mul_ps(vec_image, vec_kernel);
+          vec_image = _mm_mul_ps(vec_image, vec_kernel);
           
           //convert the lower 2 floats of mul to double and add to sum total
-          vec_sum[0] = _mm_add_pd(vec_sum[0], _mm_cvtps_pd(vec_mul));
+          vec_sum[0] = _mm_add_pd(vec_sum[0], _mm_cvtps_pd(vec_image));
           //rearrange mul so that the upper two floats are now the lower two floats
-          vec_mul = _mm_shuffle_ps(vec_mul, vec_mul, _MM_SHUFFLE(1, 0, 3, 2));
+          vec_image = _mm_shuffle_ps(vec_image, vec_image, _MM_SHUFFLE(1, 0, 3, 2));
           //convert the lower 2 floats of mul to double and add to sum total
-          vec_sum[1] = _mm_add_pd(vec_sum[1], _mm_cvtps_pd(vec_mul));
+          vec_sum[1] = _mm_add_pd(vec_sum[1], _mm_cvtps_pd(vec_image));
         }
         //note nchannels should always be 2^n and >32, therefore it will always be %4, so no remainder sums necessary
       }
