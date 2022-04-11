@@ -29,6 +29,10 @@
                  a small set of values
 
    Version 1.1 : Fixed bug in code to create 4d matrix
+   
+   Student_conv:
+   Authors: Emmet Morrin, Emmet McDonald, Maryann Foley
+   Date: April 2022
 */
 
 #include <stdio.h>
